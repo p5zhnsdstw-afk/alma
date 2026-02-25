@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/families/
+data/alma-master.db
+.env
+*.log
+.DS_Store
