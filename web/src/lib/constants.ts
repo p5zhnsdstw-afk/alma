@@ -1,3 +1,5 @@
+export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export const BRAND = {
   name: "alma",
   tagline: "Tu hogar, bajo control.",

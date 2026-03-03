@@ -6,7 +6,7 @@ import { Link } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { LanguageToggle } from "@/components/language-toggle";
 import { cn } from "@/lib/utils";
-import { BRAND } from "@/lib/constants";
+import { BASE_PATH } from "@/lib/constants";
 import Image from "next/image";
 
 const NAV_LINKS = [
@@ -48,7 +48,7 @@ export function Navbar() {
             className="flex items-center gap-2"
             onClick={closeMobileMenu}
           >
-            <Image src="/logo/logo.svg" alt="alma" width={48} height={48} />
+            <Image src={`${BASE_PATH}/logo/logo.svg`} alt="alma" width={48} height={48} />
             <span className="font-heading text-3xl font-bold text-night">alma</span>
           </Link>
 

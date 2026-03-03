@@ -2,6 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import Image from "next/image";
+import { BASE_PATH } from "@/lib/constants";
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -12,7 +13,7 @@ export function Footer() {
     <footer className="bg-stone px-4 py-12 sm:px-6">
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 text-center">
         <div className="flex items-center gap-4">
-          <Image src="/logo/logo.svg" alt="alma" width={80} height={80} />
+          <Image src={`${BASE_PATH}/logo/logo.svg`} alt="alma" width={80} height={80} />
           <span className="font-heading text-5xl font-bold tracking-tight text-night">
             alma
           </span>
