@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { motion } from "framer-motion";
 import {
+  Send,
   Sun,
   Wrench,
   Users,
@@ -13,6 +14,7 @@ import {
 import { FeatureCard } from "@/components/feature-card";
 
 const FEATURES = [
+  { key: "delayedNudge", icon: Send },
   { key: "briefing", icon: Sun },
   { key: "maintenance", icon: Wrench },
   { key: "coordination", icon: Users },

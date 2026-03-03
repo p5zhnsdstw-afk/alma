@@ -47,6 +47,10 @@
   "features": {
     "title": "What Alma Does For You",
     "subtitle": "Everything you need for a stress-free home",
+    "delayedNudge": {
+      "title": "Tell Alma, She Delivers",
+      "description": "Send a message now and Alma delivers it to whoever you want, at the time you choose. You remember it, Alma handles it."
+    },
     "briefing": {
       "title": "Morning Briefing",
       "description": "Every morning, Alma tells you what's on: appointments, pending tasks, reminders."
@@ -87,6 +91,7 @@
       "period": "/mo",
       "description": "For the one carrying the load",
       "features": [
+        "Delayed messages to your family",
         "Morning and evening briefings",
         "Preventive home maintenance",
         "Voice and text capture",

@@ -47,6 +47,10 @@
   "features": {
     "title": "Lo Que Alma Hace Por Ti",
     "subtitle": "Todo lo que necesitas para que tu hogar funcione sin estrés",
+    "delayedNudge": {
+      "title": "Díselo a Alma, Ella lo Entrega",
+      "description": "Mándale un mensaje ahora y Alma se lo envía a quien tú quieras, en el horario que elijas. Tú te acuerdas, Alma se encarga."
+    },
     "briefing": {
       "title": "Briefing Matutino",
       "description": "Cada mañana, Alma te dice qué hay hoy: citas, tareas pendientes, recordatorios."
@@ -87,6 +91,7 @@
       "period": "/mes",
       "description": "Para quien lleva la carga del hogar",
       "features": [
+        "Mensajes diferidos a tu familia",
         "Briefing matutino y vespertino",
         "Mantenimiento preventivo del hogar",
         "Captura por voz y texto",
