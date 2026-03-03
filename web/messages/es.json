@@ -1,0 +1,181 @@
+{
+  "nav": {
+    "features": "Funciones",
+    "pricing": "Precios",
+    "faq": "FAQ",
+    "cta": "Comenzar gratis"
+  },
+  "hero": {
+    "headline": "Tu hogar, bajo control.",
+    "subheadline": "Alma previene desastres domésticos, elimina el caos y distribuye la carga mental. Todo desde WhatsApp.",
+    "cta": "Comenzar 7 días gratis",
+    "subCta": "Sin tarjeta. Sin app. Solo WhatsApp.",
+    "fundadoras": "Quedan {count} cupos a ${price}/mes de por vida"
+  },
+  "problem": {
+    "title": "El Trabajo Invisible",
+    "subtitle": "Lo que nadie ve pero todos sienten",
+    "stat1": {
+      "value": "73%",
+      "label": "de la carga mental recae en una sola persona"
+    },
+    "stat2": {
+      "value": "65%",
+      "label": "posponen mantenimiento y terminan en emergencias de $5,000+"
+    },
+    "stat3": {
+      "value": "2-10 hrs",
+      "label": "semanales coordinando la logística del hogar"
+    }
+  },
+  "solution": {
+    "title": "Cómo Funciona Alma",
+    "subtitle": "Tres pasos. Cero apps nuevas.",
+    "step1": {
+      "title": "Habla en WhatsApp",
+      "description": "Dile a Alma lo que necesitas — por texto o nota de voz. Sin formularios, sin apps."
+    },
+    "step2": {
+      "title": "Alma organiza todo",
+      "description": "Agenda citas, crea recordatorios, planifica mantenimiento y coordina con tu familia."
+    },
+    "step3": {
+      "title": "Tu familia recibe nudges",
+      "description": "Alma envía recordatorios amables a tu pareja e hijos. Sin que tú tengas que ser la 'mala'."
+    }
+  },
+  "features": {
+    "title": "Lo Que Alma Hace Por Ti",
+    "subtitle": "Todo lo que necesitas para que tu hogar funcione sin estrés",
+    "briefing": {
+      "title": "Briefing Matutino",
+      "description": "Cada mañana, Alma te dice qué hay hoy: citas, tareas pendientes, recordatorios."
+    },
+    "maintenance": {
+      "title": "Mantenimiento del Hogar",
+      "description": "Filtros, plomería, electrodomésticos — Alma sabe cuándo toca cada cosa."
+    },
+    "coordination": {
+      "title": "Coordinación Familiar",
+      "description": "Asigna tareas, envía recordatorios a tu pareja, y hace seguimiento automático."
+    },
+    "capture": {
+      "title": "Captura en 5 Segundos",
+      "description": "Manda un audio o texto y Alma lo convierte en tarea, evento o recordatorio."
+    },
+    "whatsapp": {
+      "title": "Vive en WhatsApp",
+      "description": "No necesitas descargar nada. Alma vive donde ya estás — en WhatsApp."
+    },
+    "memory": {
+      "title": "Memoria que Mejora",
+      "description": "Alma aprende tus rutinas, preferencias y estilo. Cada semana es mejor que la anterior."
+    }
+  },
+  "socialProof": {
+    "title": "No lo decimos nosotros",
+    "stat1": "El 73% de la carga mental del hogar recae en mujeres — Harvard Business Review",
+    "stat2": "Posponer mantenimiento preventivo genera emergencias que cuestan 5-10x más — HomeAdvisor",
+    "stat3": "Las familias gastan 2-10 horas semanales en coordinación logística — Angi"
+  },
+  "pricing": {
+    "title": "Planes",
+    "subtitle": "Menos de $1 al día. Lo que una empleada doméstica hace por $400/mes.",
+    "alma": {
+      "name": "Alma",
+      "price": "$24.99",
+      "period": "/mes",
+      "description": "Para quien lleva la carga del hogar",
+      "features": [
+        "Briefing matutino y vespertino",
+        "Mantenimiento preventivo del hogar",
+        "Captura por voz y texto",
+        "Coordinación con tu pareja",
+        "Memoria adaptativa",
+        "Soporte por WhatsApp"
+      ]
+    },
+    "familia": {
+      "name": "Alma Familia",
+      "price": "$39.99",
+      "period": "/mes",
+      "description": "Para toda la familia",
+      "features": [
+        "Todo lo de Alma, más:",
+        "Hasta 4 miembros con briefings propios",
+        "Calendario familiar compartido",
+        "Asignación de tareas a todos",
+        "Briefings personalizados por miembro",
+        "Prioridad en soporte"
+      ],
+      "popular": "Más popular"
+    },
+    "fundadoras": {
+      "title": "Fundadoras 50",
+      "description": "Las primeras 50 familias pagan precio fundadora de por vida",
+      "almaPrice": "$19.99/mes",
+      "familiaPrice": "$29.99/mes",
+      "forever": "de por vida"
+    },
+    "trial": "7 días gratis — sin tarjeta de crédito",
+    "cta": "Comenzar gratis"
+  },
+  "faq": {
+    "title": "Preguntas Frecuentes",
+    "questions": [
+      {
+        "q": "¿Alma es solo recordatorios?",
+        "a": "No. Alma es un asistente inteligente que entiende contexto, coordina con tu familia, planifica mantenimiento preventivo y mejora con el tiempo. Los recordatorios son solo una pequeña parte."
+      },
+      {
+        "q": "¿Por qué WhatsApp y no una app?",
+        "a": "Porque ya pasas horas en WhatsApp. Una app más significaría otra cosa que abrir, revisar y mantener. Alma elimina fricción, no la agrega."
+      },
+      {
+        "q": "¿Mis datos están seguros?",
+        "a": "Absolutamente. Cada familia tiene su propia base de datos aislada. No compartimos información entre familias, y nunca vendemos datos. Tus conversaciones son privadas."
+      },
+      {
+        "q": "¿Cómo funciona la prueba gratuita?",
+        "a": "7 días completos sin restricciones y sin necesitar tarjeta de crédito. Si no te convence, simplemente deja de hablar con Alma. Sin cargos, sin complicaciones."
+      },
+      {
+        "q": "¿Cuántas personas pueden usar Alma Familia?",
+        "a": "Hasta 4 miembros de la familia, cada uno con su propio número de WhatsApp y briefings personalizados."
+      },
+      {
+        "q": "¿Se conecta con mi calendario?",
+        "a": "Sí. Alma sincroniza con Google Calendar y Apple Calendar. Pero si prefieres no conectar nada, funciona perfecto solo con WhatsApp."
+      },
+      {
+        "q": "¿Qué tipo de mantenimiento cubre?",
+        "a": "Desde cambio de filtros de agua y aire, hasta revisión de electrodomésticos, plomería preventiva, y mantenimiento estacional. Todo basado en datos reales de fabricantes."
+      },
+      {
+        "q": "¿Puedo cancelar en cualquier momento?",
+        "a": "Sí, cancelas cuando quieras — sin penalidad, sin preguntas. Tu información se borra completamente en 30 días."
+      }
+    ]
+  },
+  "finalCta": {
+    "headline": "Tu hogar merece estar bajo control.",
+    "subheadline": "Únete a las familias que ya dejaron de improvisar.",
+    "cta": "Comenzar 7 días gratis"
+  },
+  "footer": {
+    "tagline": "El asistente inteligente para tu hogar.",
+    "privacy": "Privacidad",
+    "terms": "Términos",
+    "copyright": "© {year} Alma. Todos los derechos reservados."
+  },
+  "waitlist": {
+    "title": "Únete a la lista de espera",
+    "subtitle": "Te avisamos cuando Alma esté lista.",
+    "name": "Tu nombre",
+    "phone": "Tu WhatsApp (con código de país)",
+    "familySize": "Miembros de tu familia",
+    "submit": "Reservar mi lugar",
+    "success": "¡Listo! Te avisaremos pronto por WhatsApp.",
+    "error": "Algo salió mal. Intenta de nuevo."
+  }
+}

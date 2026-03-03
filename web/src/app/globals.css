@@ -1,0 +1,80 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-opensans);
+  --font-heading: var(--font-nunito);
+  --font-data: var(--font-quicksand);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Brand: Olive & Stone palette */
+  --color-olive: #7A8060;
+  --color-olive-light: #8E9474;
+  --color-olive-dark: #555A40;
+  --color-sage: #B5B89A;
+  --color-sage-light: #C8CAAF;
+  --color-stone: #F0F0EA;
+  --color-parchment: #f8f8f5;
+  --color-night: #252620;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: #f8f8f5;
+  --foreground: #252620;
+  --card: #FFFFFF;
+  --card-foreground: #252620;
+  --popover: #FFFFFF;
+  --popover-foreground: #252620;
+  --primary: #7A8060;
+  --primary-foreground: #FFFFFF;
+  --secondary: #555A40;
+  --secondary-foreground: #FFFFFF;
+  --muted: #F0F0EA;
+  --muted-foreground: #7A7A6E;
+  --accent: #B5B89A;
+  --accent-foreground: #252620;
+  --destructive: #DC2626;
+  --border: #E0E0D8;
+  --input: #E0E0D8;
+  --ring: #7A8060;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-nunito), sans-serif;
+  }
+}
