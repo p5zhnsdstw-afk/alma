@@ -1,0 +1,866 @@
+#!/usr/bin/env python3
+"""Alma delivery engine for OpenClaw/Ari — test MVP.
+
+Delivers messages between family members with scheduling, follow-ups, and confirmation tracking.
+Runs on macvieja alongside Ari, using Ari's WhatsApp (Baileys) for delivery.
+
+DB: ~/.openclaw/workspace/alma/deliveries.db
+Send: ~/.openclaw/scripts/send-whatsapp.sh
+
+Usage:
+    alma-deliver init-db
+    alma-deliver seed-contacts
+    alma-deliver create --sender NAME --recipient "NAME" --message "TEXT" [--when "TIME"]
+    alma-deliver list [--status STATUS] [--sender NAME]
+    alma-deliver check-reply --from "PHONE" --text "TEXT"
+    alma-deliver process-scheduled
+    alma-deliver process-followups
+    alma-deliver process-expirations
+    alma-deliver briefing-data --user NAME
+    alma-deliver status ID
+"""
+
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import uuid
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+# ── Config ──────────────────────────────────────────────────────────────────
+
+DB_PATH = os.path.expanduser("~/.openclaw/workspace/alma/deliveries.db")
+SEND_SCRIPT = os.path.expanduser("~/.openclaw/scripts/send-whatsapp.sh")
+ECT = ZoneInfo("America/Guayaquil")
+UTC = timezone.utc
+
+MAX_FOLLOWUPS = 2
+FOLLOWUP_DELAY_HOURS = 2
+FOLLOWUP_MULTIPLIER = 2  # doubles each time: 2h, 4h
+EXPIRY_HOURS = 24
+MAX_DAILY_NUDGES = 5
+STUCK_THRESHOLD_MINUTES = 5
+MAX_MESSAGE_LENGTH = 500
+
+CONTACTS_SEED = [
+    ("Robert", "robert", "+593999481169", "both"),
+    ("Mari", "mari", "+593993904121", "both"),
+    ("María Isabel", "maria isabel", "+593993904121", "both"),
+]
+
+CONFIRM_PATTERNS = [
+    "ok", "okey", "okay", "dale", "listo", "ya", "hecho", "ya lo hice",
+    "done", "got it", "will do", "ya está", "ya esta", "claro", "sí", "si",
+    "ya la saqué", "ya lo saqué", "perfecto", "va", "bueno", "ready",
+    "✅", "👍", "ya mero", "ahí voy", "en eso estoy",
+]
+
+PUSHBACK_PATTERNS = [
+    "no puedo", "no voy", "después", "despues", "estoy ocupado",
+    "can't", "later", "busy", "not now", "ahora no", "más tarde",
+    "mas tarde", "no me da tiempo", "imposible",
+]
+
+OPTOUT_PATTERNS = ["parar", "stop", "no más", "no mas", "basta"]
+
+SENDER_MAP = {
+    "robert": ("+593999481169", "Robert"),
+    "mari": ("+593993904121", "Mari"),
+}
+
+
+# ── Database ────────────────────────────────────────────────────────────────
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS deliveries (
+    id TEXT PRIMARY KEY,
+    sender_name TEXT NOT NULL,
+    sender_phone TEXT NOT NULL,
+    recipient_name TEXT NOT NULL,
+    recipient_phone TEXT NOT NULL,
+    message_body TEXT NOT NULL,
+    original_text TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    deliver_at TEXT,
+    delivered_at TEXT,
+    confirmed_at TEXT,
+    confirmation_text TEXT,
+    followup_count INTEGER DEFAULT 0,
+    max_followups INTEGER DEFAULT 2,
+    next_followup_at TEXT,
+    expires_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    name_normalized TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    owner TEXT NOT NULL DEFAULT 'both',
+    opted_out INTEGER DEFAULT 0,
+    first_contacted INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(name_normalized, owner)
+);
+
+CREATE TABLE IF NOT EXISTS nudge_counts (
+    phone TEXT NOT NULL,
+    date TEXT NOT NULL,
+    count INTEGER DEFAULT 0,
+    PRIMARY KEY (phone, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliveries_scheduled
+    ON deliveries(status, deliver_at) WHERE status IN ('scheduled', 'delivering');
+CREATE INDEX IF NOT EXISTS idx_deliveries_recipient
+    ON deliveries(recipient_phone, status) WHERE status = 'delivered';
+CREATE INDEX IF NOT EXISTS idx_deliveries_followup
+    ON deliveries(next_followup_at) WHERE status = 'delivered' AND next_followup_at IS NOT NULL;
+"""
+
+
+def get_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=5000")
+    return db
+
+
+def now_utc():
+    return datetime.now(UTC)
+
+
+def now_utc_str():
+    return now_utc().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def now_ect():
+    return datetime.now(ECT)
+
+
+def today_ect():
+    return now_ect().strftime("%Y-%m-%d")
+
+
+def format_time_ect(utc_str):
+    """Convert UTC datetime string to ECT display time."""
+    dt = datetime.strptime(utc_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    local = dt.astimezone(ECT)
+    return local.strftime("%H:%M")
+
+
+# ── Time Parsing ────────────────────────────────────────────────────────────
+
+def parse_delivery_time(when_str):
+    """Parse user time input into UTC ISO string. Returns None for immediate."""
+    if not when_str or when_str.strip().lower() in ("ahora", "now", "ya"):
+        return None
+
+    now = now_ect()
+    s = when_str.strip().lower()
+
+    # Relative: "en 30 minutos", "en 2 horas"
+    m = re.match(r"en\s+(\d+)\s*(min(?:utos?)?|h(?:oras?)?)", s)
+    if m:
+        val = int(m.group(1))
+        unit = m.group(2)
+        if unit.startswith("h"):
+            delta = timedelta(hours=val)
+        else:
+            delta = timedelta(minutes=val)
+        target = now + delta
+        return target.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    # "mañana a las HH:MM" or "mañana a las H"
+    m = re.match(r"mañana\s+a\s+las?\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?", s)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ampm = m.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        tomorrow = now + timedelta(days=1)
+        target = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return target.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    # HH:MM or Hpm/Ham
+    m = re.match(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", s)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ampm = m.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return target.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    # "a las HH:MM"
+    m = re.match(r"a\s+las?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", s)
+    if m:
+        hour = int(m.group(1))
+        minute = int(m.group(2) or 0)
+        ampm = m.group(3)
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return target.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+    return None
+
+
+# ── Nudge Rate Limiting ─────────────────────────────────────────────────────
+
+def can_nudge(db, phone):
+    row = db.execute(
+        "SELECT count FROM nudge_counts WHERE phone=? AND date=?",
+        (phone, today_ect())
+    ).fetchone()
+    return (row["count"] if row else 0) < MAX_DAILY_NUDGES
+
+
+def record_nudge(db, phone):
+    db.execute(
+        """INSERT INTO nudge_counts (phone, date, count) VALUES (?, ?, 1)
+           ON CONFLICT(phone, date) DO UPDATE SET count = count + 1""",
+        (phone, today_ect())
+    )
+    db.commit()
+
+
+# ── Reply Classification ────────────────────────────────────────────────────
+
+def classify_reply(text):
+    lower = text.lower().strip()
+    # Remove punctuation for matching (keep emojis)
+    clean = re.sub(r"[^\w\s✅👍]", "", lower).strip()
+    words = set(clean.split())
+
+    # Check emojis first (unambiguous)
+    if "✅" in lower or "👍" in lower:
+        return "confirmation"
+
+    for p in OPTOUT_PATTERNS:
+        if _match_phrase(p, clean):
+            return "optout"
+    for p in CONFIRM_PATTERNS:
+        if _match_phrase(p, clean):
+            return "confirmation"
+    for p in PUSHBACK_PATTERNS:
+        if _match_phrase(p, clean):
+            return "pushback"
+
+    # Short positive messages — use WORD matching (not substring)
+    CONFIRM_WORDS = {"ok", "si", "ya", "va", "bien", "dale", "listo", "okey"}
+    if len(clean) < 20 and words & CONFIRM_WORDS:
+        return "confirmation"
+
+    return "unknown"
+
+
+def _match_phrase(phrase, text):
+    """Match a phrase using word boundaries, not substring."""
+    # Exact match
+    if text == phrase:
+        return True
+    # Multi-word phrase: check if it appears as whole words
+    if " " in phrase:
+        pattern = r"\b" + re.escape(phrase) + r"\b"
+        return bool(re.search(pattern, text))
+    # Single word: check word set
+    return phrase in text.split()
+
+
+# ── WhatsApp Send ────────────────────────────────────────────────────────────
+
+def send_whatsapp(phone, message):
+    try:
+        result = subprocess.run(
+            [SEND_SCRIPT, phone, message],
+            capture_output=True, text=True, timeout=45
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        # Gateway likely delivered even on timeout
+        return True
+    except Exception:
+        return False
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def cmd_init_db():
+    db = get_db()
+    db.executescript(SCHEMA)
+    db.commit()
+    db.close()
+    print(json.dumps({"status": "ok", "message": "Database initialized", "path": DB_PATH}))
+
+
+def cmd_seed_contacts():
+    db = get_db()
+    for name, normalized, phone, owner in CONTACTS_SEED:
+        db.execute(
+            """INSERT OR IGNORE INTO contacts (name, name_normalized, phone, owner)
+               VALUES (?, ?, ?, ?)""",
+            (name, normalized, phone, owner)
+        )
+    db.commit()
+    count = db.execute("SELECT COUNT(*) as c FROM contacts").fetchone()["c"]
+    db.close()
+    print(json.dumps({"status": "ok", "message": f"Contacts seeded ({count} total)"}))
+
+
+def cmd_create(args):
+    sender = get_flag(args, "--sender")
+    recipient = get_flag(args, "--recipient")
+    message = get_flag(args, "--message")
+    when_str = get_flag(args, "--when", None)
+
+    if not sender or not recipient or not message:
+        print(json.dumps({"status": "error", "message": "Required: --sender, --recipient, --message"}))
+        sys.exit(1)
+
+    if len(message) > MAX_MESSAGE_LENGTH:
+        message = message[:MAX_MESSAGE_LENGTH]
+
+    sender_lower = sender.lower()
+    if sender_lower not in SENDER_MAP:
+        print(json.dumps({"status": "error", "message": f"Sender desconocido: {sender}. Usa: robert, mari"}))
+        sys.exit(1)
+
+    sender_phone, sender_display = SENDER_MAP[sender_lower]
+
+    db = get_db()
+
+    # Resolve recipient
+    normalized = recipient.lower().strip()
+    contact = db.execute(
+        "SELECT * FROM contacts WHERE name_normalized=? AND opted_out=0",
+        (normalized,)
+    ).fetchone()
+
+    if not contact:
+        # Try partial match
+        contacts = db.execute("SELECT * FROM contacts WHERE opted_out=0").fetchall()
+        for c in contacts:
+            if normalized in c["name_normalized"] or c["name_normalized"] in normalized:
+                contact = c
+                break
+
+    if not contact:
+        db.close()
+        print(json.dumps({
+            "status": "error",
+            "message": f"No conozco a '{recipient}'. Dime su número de WhatsApp para agregarlo."
+        }))
+        return
+
+    # Don't send to yourself
+    if contact["phone"] == sender_phone:
+        db.close()
+        print(json.dumps({"status": "error", "message": "No puedes enviarte un mensaje a ti mismo."}))
+        return
+
+    deliver_at = parse_delivery_time(when_str)
+    is_immediate = deliver_at is None
+    if is_immediate:
+        deliver_at = now_utc_str()
+
+    expires_at_dt = datetime.strptime(deliver_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC) + timedelta(hours=EXPIRY_HOURS)
+    expires_at = expires_at_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    delivery_id = str(uuid.uuid4())[:8]
+
+    db.execute(
+        """INSERT INTO deliveries
+           (id, sender_name, sender_phone, recipient_name, recipient_phone,
+            message_body, original_text, status, deliver_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?)""",
+        (delivery_id, sender_lower, sender_phone, contact["name"],
+         contact["phone"], message, message, deliver_at, expires_at)
+    )
+    db.commit()
+    db.close()
+
+    if is_immediate:
+        confirm = f"Listo, le aviso a {contact['name']} ahora mismo."
+    else:
+        time_display = format_time_ect(deliver_at)
+        confirm = f"Listo, le aviso a {contact['name']} a las {time_display}."
+
+    print(json.dumps({
+        "status": "ok",
+        "id": delivery_id,
+        "message": confirm,
+        "immediate": is_immediate
+    }))
+
+
+def cmd_list(args):
+    status_filter = get_flag(args, "--status", None)
+    sender_filter = get_flag(args, "--sender", None)
+
+    db = get_db()
+    query = "SELECT * FROM deliveries WHERE 1=1"
+    params = []
+
+    if status_filter:
+        query += " AND status=?"
+        params.append(status_filter)
+    if sender_filter:
+        query += " AND sender_name=?"
+        params.append(sender_filter.lower())
+
+    query += " ORDER BY created_at DESC LIMIT 20"
+    rows = db.execute(query, params).fetchall()
+    db.close()
+
+    items = []
+    for r in rows:
+        item = {
+            "id": r["id"],
+            "to": r["recipient_name"],
+            "message": r["message_body"],
+            "status": r["status"],
+            "deliver_at": format_time_ect(r["deliver_at"]) if r["deliver_at"] else None,
+            "created": r["created_at"],
+        }
+        if r["confirmed_at"]:
+            item["confirmed"] = r["confirmed_at"]
+            item["reply"] = r["confirmation_text"]
+        items.append(item)
+
+    print(json.dumps({"deliveries": items, "count": len(items)}))
+
+
+def cmd_check_reply(args):
+    from_phone = get_flag(args, "--from")
+    text = get_flag(args, "--text")
+
+    if not from_phone or not text:
+        print(json.dumps({"handled": False, "error": "Required: --from, --text"}))
+        return
+
+    db = get_db()
+
+    # Find pending deliveries for this phone
+    pending = db.execute(
+        """SELECT * FROM deliveries
+           WHERE recipient_phone=? AND status='delivered'
+           ORDER BY delivered_at DESC""",
+        (from_phone,)
+    ).fetchall()
+
+    if not pending:
+        db.close()
+        print(json.dumps({"handled": False}))
+        return
+
+    classification = classify_reply(text)
+
+    if classification == "optout":
+        for d in pending:
+            db.execute(
+                "UPDATE deliveries SET status='expired', updated_at=? WHERE id=?",
+                (now_utc_str(), d["id"])
+            )
+        db.execute(
+            "UPDATE contacts SET opted_out=1 WHERE phone=?", (from_phone,)
+        )
+        db.commit()
+        db.close()
+        print(json.dumps({
+            "handled": True,
+            "response": "Listo, no te escribiré más. Si cambias de opinión, avísale a tu familia.",
+            "notify_sender": None
+        }))
+        return
+
+    target = pending[0]  # most recent delivery
+
+    if classification == "confirmation":
+        db.execute(
+            """UPDATE deliveries SET status='confirmed', confirmed_at=?,
+               confirmation_text=?, next_followup_at=NULL, updated_at=?
+               WHERE id=?""",
+            (now_utc_str(), text, now_utc_str(), target["id"])
+        )
+        db.commit()
+        db.close()
+
+        sender_msg = (
+            f"✅ {target['recipient_name']} confirmó: "
+            f"\"{target['message_body']}\" — respondió: \"{text}\""
+        )
+        print(json.dumps({
+            "handled": True,
+            "response": f"Anotado, gracias {target['recipient_name']}! 🌸",
+            "notify_sender": {
+                "phone": target["sender_phone"],
+                "message": sender_msg
+            }
+        }))
+        return
+
+    if classification == "pushback":
+        db.execute(
+            "UPDATE deliveries SET confirmation_text=?, updated_at=? WHERE id=?",
+            (text, now_utc_str(), target["id"])
+        )
+        db.commit()
+        db.close()
+
+        sender_msg = (
+            f"⚠️ {target['recipient_name']} respondió a "
+            f"\"{target['message_body']}\": \"{text}\""
+        )
+        print(json.dumps({
+            "handled": True,
+            "response": f"Entendido, le aviso a {target['sender_name'].title()}.",
+            "notify_sender": {
+                "phone": target["sender_phone"],
+                "message": sender_msg
+            }
+        }))
+        return
+
+    # Unknown classification — let Ari's LLM handle
+    db.close()
+    print(json.dumps({"handled": False, "classification": "unknown"}))
+
+
+def cmd_process_scheduled():
+    db = get_db()
+    now = now_utc_str()
+
+    # Crash recovery: reset stuck 'delivering' entries
+    db.execute(
+        """UPDATE deliveries SET status='scheduled', updated_at=?
+           WHERE status='delivering'
+           AND updated_at < datetime(?, '-5 minutes')""",
+        (now, now)
+    )
+
+    # Claim due deliveries atomically
+    db.execute(
+        """UPDATE deliveries SET status='delivering', updated_at=?
+           WHERE status='scheduled' AND deliver_at <= ?""",
+        (now, now)
+    )
+    db.commit()
+
+    rows = db.execute("SELECT * FROM deliveries WHERE status='delivering'").fetchall()
+    sent = 0
+    failed = 0
+
+    for row in rows:
+        if not can_nudge(db, row["recipient_phone"]):
+            # Over rate limit — revert to scheduled, try next tick
+            db.execute(
+                "UPDATE deliveries SET status='scheduled', updated_at=? WHERE id=?",
+                (now, row["id"])
+            )
+            db.commit()
+            continue
+
+        # Check if recipient opted out
+        contact = db.execute(
+            "SELECT opted_out FROM contacts WHERE phone=?",
+            (row["recipient_phone"],)
+        ).fetchone()
+        if contact and contact["opted_out"]:
+            db.execute(
+                "UPDATE deliveries SET status='expired', updated_at=? WHERE id=?",
+                (now, row["id"])
+            )
+            db.commit()
+            continue
+
+        # Compose message
+        sender_display = row["sender_name"].title()
+        is_first = not db.execute(
+            """SELECT 1 FROM deliveries
+               WHERE recipient_phone=? AND status='confirmed' AND id != ?""",
+            (row["recipient_phone"], row["id"])
+        ).fetchone()
+
+        if is_first:
+            msg = (
+                f"Hola {row['recipient_name']}! Soy Ari 🌸, "
+                f"la asistente de tu familia.\n\n"
+                f"{sender_display} me pidió que te avise: "
+                f"{row['message_body']}.\n\n"
+                f"Avísame cuando lo hagas. "
+                f"Si prefieres que no te escriba, responde 'parar'."
+            )
+        else:
+            msg = (
+                f"Hola {row['recipient_name']}! "
+                f"{sender_display} me pidió que te avise: "
+                f"{row['message_body']}. "
+                f"Avísame cuando lo hagas."
+            )
+
+        if send_whatsapp(row["recipient_phone"], msg):
+            followup_at = (now_utc() + timedelta(hours=FOLLOWUP_DELAY_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+            expires_at = row["expires_at"] or (now_utc() + timedelta(hours=EXPIRY_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+            db.execute(
+                """UPDATE deliveries SET status='delivered', delivered_at=?,
+                   next_followup_at=?, expires_at=?, updated_at=?
+                   WHERE id=?""",
+                (now, followup_at, expires_at, now, row["id"])
+            )
+            record_nudge(db, row["recipient_phone"])
+            sent += 1
+            log(f"SENT {row['id']} → {row['recipient_name']}: {row['message_body'][:50]}")
+        else:
+            db.execute(
+                "UPDATE deliveries SET status='failed', updated_at=? WHERE id=?",
+                (now, row["id"])
+            )
+            # Notify sender of failure
+            send_whatsapp(
+                row["sender_phone"],
+                f"No pude entregar tu mensaje a {row['recipient_name']}. Intenta de nuevo."
+            )
+            failed += 1
+            log(f"FAIL {row['id']} → {row['recipient_name']}")
+
+    db.commit()
+    db.close()
+
+    if sent > 0 or failed > 0:
+        log(f"process-scheduled: sent={sent} failed={failed}")
+
+
+def cmd_process_followups():
+    db = get_db()
+    now = now_utc_str()
+
+    rows = db.execute(
+        """SELECT * FROM deliveries
+           WHERE status='delivered'
+           AND next_followup_at IS NOT NULL
+           AND next_followup_at <= ?
+           AND followup_count < max_followups""",
+        (now,)
+    ).fetchall()
+
+    sent = 0
+    for row in rows:
+        if not can_nudge(db, row["recipient_phone"]):
+            continue
+
+        count = row["followup_count"] + 1
+        if count == 1:
+            msg = (
+                f"Hola {row['recipient_name']}, recordatorio: "
+                f"{row['message_body']}. Avísame cuando lo hagas 🌸"
+            )
+        else:
+            msg = (
+                f"{row['recipient_name']}, último recordatorio: "
+                f"{row['message_body']}."
+            )
+
+        if send_whatsapp(row["recipient_phone"], msg):
+            # Double the delay each time
+            next_delay = FOLLOWUP_DELAY_HOURS * (FOLLOWUP_MULTIPLIER ** count)
+            next_followup = None
+            if count < row["max_followups"]:
+                next_followup = (now_utc() + timedelta(hours=next_delay)).strftime("%Y-%m-%d %H:%M:%S")
+
+            db.execute(
+                """UPDATE deliveries SET followup_count=?, next_followup_at=?, updated_at=?
+                   WHERE id=?""",
+                (count, next_followup, now, row["id"])
+            )
+            record_nudge(db, row["recipient_phone"])
+            sent += 1
+            log(f"FOLLOWUP #{count} {row['id']} → {row['recipient_name']}")
+
+    db.commit()
+    db.close()
+
+    if sent > 0:
+        log(f"process-followups: sent={sent}")
+
+
+def cmd_process_expirations():
+    db = get_db()
+    now = now_utc_str()
+
+    # Expire old delivered (no confirmation after EXPIRY_HOURS)
+    expired = db.execute(
+        """SELECT * FROM deliveries
+           WHERE status='delivered' AND expires_at <= ?""",
+        (now,)
+    ).fetchall()
+
+    count = 0
+    for row in expired:
+        db.execute(
+            "UPDATE deliveries SET status='expired', updated_at=? WHERE id=?",
+            (now, row["id"])
+        )
+        # Notify sender
+        send_whatsapp(
+            row["sender_phone"],
+            f"{row['recipient_name']} no respondió a: \"{row['message_body']}\". "
+            f"Quizás necesites hablar directamente."
+        )
+        count += 1
+        log(f"EXPIRED {row['id']} → {row['recipient_name']}")
+
+    db.commit()
+    db.close()
+
+    if count > 0:
+        log(f"process-expirations: expired={count}")
+
+
+def cmd_briefing_data(args):
+    user = get_flag(args, "--user", "robert")
+    user_lower = user.lower()
+    if user_lower not in SENDER_MAP:
+        print(json.dumps({"total": 0}))
+        return
+
+    sender_phone = SENDER_MAP[user_lower][0]
+    db = get_db()
+
+    # Yesterday's stats (last 24h)
+    yesterday = (now_utc() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+
+    sent = db.execute(
+        "SELECT COUNT(*) as c FROM deliveries WHERE sender_phone=? AND delivered_at >= ?",
+        (sender_phone, yesterday)
+    ).fetchone()["c"]
+
+    confirmed = db.execute(
+        "SELECT COUNT(*) as c FROM deliveries WHERE sender_phone=? AND confirmed_at >= ?",
+        (sender_phone, yesterday)
+    ).fetchone()["c"]
+
+    # Current pending
+    pending = db.execute(
+        """SELECT recipient_name, message_body, delivered_at FROM deliveries
+           WHERE sender_phone=? AND status='delivered'
+           ORDER BY delivered_at DESC""",
+        (sender_phone,)
+    ).fetchall()
+
+    pending_details = [
+        {
+            "recipient": r["recipient_name"],
+            "message": r["message_body"],
+            "delivered_at": r["delivered_at"]
+        }
+        for r in pending
+    ]
+
+    db.close()
+
+    print(json.dumps({
+        "total": sent + len(pending),
+        "sent_yesterday": sent,
+        "confirmed_yesterday": confirmed,
+        "pending_count": len(pending_details),
+        "pending_details": pending_details
+    }))
+
+
+def cmd_status(args):
+    delivery_id = args[0] if args else None
+    if not delivery_id:
+        print(json.dumps({"status": "error", "message": "Provide delivery ID"}))
+        return
+
+    db = get_db()
+    row = db.execute("SELECT * FROM deliveries WHERE id=?", (delivery_id,)).fetchone()
+    db.close()
+
+    if not row:
+        print(json.dumps({"status": "error", "message": f"Delivery {delivery_id} not found"}))
+        return
+
+    print(json.dumps({
+        "id": row["id"],
+        "to": row["recipient_name"],
+        "message": row["message_body"],
+        "status": row["status"],
+        "deliver_at": row["deliver_at"],
+        "delivered_at": row["delivered_at"],
+        "confirmed_at": row["confirmed_at"],
+        "confirmation_text": row["confirmation_text"],
+        "followup_count": row["followup_count"],
+        "created_at": row["created_at"]
+    }))
+
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+
+def get_flag(args, flag, default=None):
+    try:
+        idx = args.index(flag)
+        if idx + 1 < len(args):
+            return args[idx + 1]
+    except ValueError:
+        pass
+    return default
+
+
+def log(msg):
+    ts = now_ect().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", file=sys.stderr)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
+
+    commands = {
+        "init-db": lambda: cmd_init_db(),
+        "seed-contacts": lambda: cmd_seed_contacts(),
+        "create": lambda: cmd_create(args),
+        "list": lambda: cmd_list(args),
+        "check-reply": lambda: cmd_check_reply(args),
+        "process-scheduled": lambda: cmd_process_scheduled(),
+        "process-followups": lambda: cmd_process_followups(),
+        "process-expirations": lambda: cmd_process_expirations(),
+        "briefing-data": lambda: cmd_briefing_data(args),
+        "status": lambda: cmd_status(args),
+    }
+
+    if cmd in commands:
+        commands[cmd]()
+    else:
+        print(json.dumps({"status": "error", "message": f"Unknown command: {cmd}"}))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

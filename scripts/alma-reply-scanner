@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Alma reply scanner — bulletproof confirmation + intent capture.
+
+Two safety nets, completely independent of the LLM:
+
+1. REPLY SCANNER: Scans session files for user messages, cross-references
+   against pending deliveries. If a delivery reply is detected, sends
+   confirmation and notifications directly via send-whatsapp.sh.
+
+2. INTENT WATCHDOG: Detects delivery-intent phrases ("dile a", "avísale a")
+   in user messages and verifies that alma-deliver create was called within
+   2 minutes. If not → alerts the sender that their request was missed.
+
+Uses watermark-based scanning (NOT fixed time window) so messages are
+NEVER missed, even if the scanner is down for hours.
+
+DB: ~/.openclaw/workspace/alma/deliveries.db
+Sessions: ~/.openclaw/agents/main/sessions/
+State: ~/.openclaw/workspace/alma/scanner-state.json
+"""
+
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+# ── Config ──────────────────────────────────────────────────────────────────
+
+DB_PATH = os.path.expanduser("~/.openclaw/workspace/alma/deliveries.db")
+SESSIONS_FILE = os.path.expanduser("~/.openclaw/agents/main/sessions/sessions.json")
+STATE_FILE = os.path.expanduser("~/.openclaw/workspace/alma/scanner-state.json")
+SEND_SCRIPT = os.path.expanduser("~/.openclaw/scripts/send-whatsapp.sh")
+ALMA_DELIVER = os.path.expanduser("~/.openclaw/scripts/alma-deliver")
+ECT = ZoneInfo("America/Guayaquil")
+
+# Intent watchdog: how long to wait for LLM to call alma-deliver create (seconds)
+INTENT_GRACE_PERIOD_SECONDS = 120
+
+# Max age for messages to consider (24 hours) — prevents processing ancient history on first run
+MAX_MESSAGE_AGE_MS = 24 * 3600 * 1000
+
+# Delivery-intent phrases (Spanish + English)
+INTENT_PATTERNS = [
+    re.compile(r"\b(?:dile|dígale|digale)\s+a\s+\w+", re.IGNORECASE),
+    re.compile(r"\b(?:avísale|avisale|avisa)\s+a\s+\w+", re.IGNORECASE),
+    re.compile(r"\b(?:recuérdale|recuerdale|recuérdele|recuerdele)\s+a\s+\w+", re.IGNORECASE),
+    re.compile(r"\b(?:mándale|mandale|manda)\s+(?:mensaje|un mensaje)\s+a\s+\w+", re.IGNORECASE),
+    re.compile(r"\b(?:tell|remind|message|notify)\s+\w+\s+(?:to|that|about)", re.IGNORECASE),
+]
+
+
+def log(msg):
+    ts = datetime.now(ECT).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] SCANNER: {msg}", file=sys.stderr)
+
+
+# ── State Management ────────────────────────────────────────────────────────
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {"processed": {}, "intents": {}, "watermarks": {}}
+
+
+def save_state(state):
+    # Prune old processed entries (keep 2 hours)
+    cutoff_ms = (time.time() - 7200) * 1000
+    state["processed"] = {
+        k: v for k, v in state["processed"].items()
+        if float(k) > cutoff_ms
+    }
+    # Prune old intent entries (keep 2 hours)
+    state["intents"] = {
+        k: v for k, v in state["intents"].items()
+        if float(k.replace("intent_", "")) > cutoff_ms
+    }
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+# ── Phone Loading ───────────────────────────────────────────────────────────
+
+def load_monitor_phones():
+    """Load monitored phones from DB contacts table (dynamic, not hardcoded)."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            "SELECT phone, name FROM contacts WHERE opted_out=0"
+        ).fetchall()
+        db.close()
+        if rows:
+            return {r["phone"]: r["name"].lower() for r in rows}
+    except Exception:
+        pass
+    # Fallback if DB is unavailable
+    return {
+        "+593999481169": "robert",
+        "+593993904121": "mari",
+    }
+
+
+# ── DB Queries ──────────────────────────────────────────────────────────────
+
+def has_pending_deliveries(phone):
+    """Check if there are any delivered (awaiting confirmation) deliveries for this phone."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        row = db.execute(
+            "SELECT COUNT(*) FROM deliveries WHERE recipient_phone=? AND status='delivered'",
+            (phone,)
+        ).fetchone()
+        db.close()
+        return row[0] > 0
+    except Exception:
+        return False
+
+
+# ── WhatsApp + CLI ──────────────────────────────────────────────────────────
+
+def call_check_reply(phone, text):
+    """Call alma-deliver check-reply and return parsed result."""
+    try:
+        result = subprocess.run(
+            [ALMA_DELIVER, "check-reply", "--from", phone, "--text", text],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+    except Exception as e:
+        log(f"check-reply error: {e}")
+    return {"handled": False}
+
+
+def send_whatsapp(phone, message):
+    """Send WhatsApp message via send-whatsapp.sh."""
+    try:
+        subprocess.run(
+            [SEND_SCRIPT, phone, message],
+            capture_output=True, timeout=45
+        )
+        return True
+    except Exception:
+        return False
+
+
+# ── Intent Detection ────────────────────────────────────────────────────────
+
+def has_delivery_intent(text):
+    """Check if a message contains delivery-intent phrases."""
+    return any(p.search(text) for p in INTENT_PATTERNS)
+
+
+def was_create_called_after(session_file, after_ts_ms):
+    """Check if alma-deliver create was called in session after a given timestamp."""
+    try:
+        with open(session_file) as f:
+            lines = f.readlines()
+    except IOError:
+        return False
+
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        msg = entry.get("message", {})
+        if not isinstance(msg, dict):
+            continue
+
+        ts = msg.get("timestamp", entry.get("timestamp", 0))
+        if isinstance(ts, str):
+            try:
+                ts = float(ts)
+            except ValueError:
+                continue
+
+        if ts < after_ts_ms:
+            break
+
+        if msg.get("role") != "assistant":
+            continue
+
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "toolCall":
+                cmd = part.get("arguments", {}).get("command", "")
+                if "alma-deliver" in cmd and "create" in cmd:
+                    return True
+
+    return False
+
+
+# ── Session Scanning (Watermark-Based) ──────────────────────────────────────
+
+def get_user_messages_since(monitor_phones, watermarks):
+    """Read session files and extract user messages SINCE the last watermark per session.
+
+    Uses watermarks (persistent per-session timestamps) instead of a fixed time window.
+    This ensures messages are NEVER missed, even if the scanner is down for hours.
+    """
+    messages = []
+    new_watermarks = dict(watermarks)
+    now_ms = time.time() * 1000
+    floor_ms = now_ms - MAX_MESSAGE_AGE_MS  # Don't go further back than 24h
+
+    try:
+        with open(SESSIONS_FILE) as f:
+            sessions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return messages, new_watermarks
+
+    for session_key, session_data in sessions.items():
+        # Only check sessions from monitored phones
+        phone = None
+        for p in monitor_phones:
+            if p in session_key:
+                phone = p
+                break
+        if not phone:
+            continue
+
+        session_file = session_data.get("sessionFile", "")
+        if not session_file or not os.path.exists(session_file):
+            continue
+
+        # Watermark: last-processed timestamp for this session
+        wm_key = session_key
+        last_seen_ms = max(watermarks.get(wm_key, 0), floor_ms)
+        max_ts_this_run = last_seen_ms
+
+        try:
+            with open(session_file) as f:
+                lines = f.readlines()
+        except IOError:
+            continue
+
+        # Scan from the end for messages newer than watermark
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                continue
+
+            # Only user messages
+            if msg.get("role") != "user":
+                continue
+
+            # Check timestamp
+            ts = msg.get("timestamp", entry.get("timestamp", 0))
+            if isinstance(ts, str):
+                try:
+                    ts = float(ts)
+                except ValueError:
+                    continue
+
+            # Stop if we've passed our watermark
+            if ts <= last_seen_ms:
+                break
+
+            # Track highest timestamp seen
+            if ts > max_ts_this_run:
+                max_ts_this_run = ts
+
+            # Extract text content
+            content = msg.get("content", [])
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text = part.get("text", "")
+                        break
+
+            if text and len(text.strip()) > 0:
+                messages.append({
+                    "phone": phone,
+                    "text": text.strip(),
+                    "timestamp": ts,
+                    "session_key": session_key,
+                    "session_file": session_file,
+                })
+
+        # Update watermark to highest timestamp seen
+        new_watermarks[wm_key] = max_ts_this_run
+
+    return messages, new_watermarks
+
+
+# ── Main ────────────────────────────────────────────────────────────────────
+
+def main():
+    state = load_state()
+    if "intents" not in state:
+        state["intents"] = {}
+    if "watermarks" not in state:
+        state["watermarks"] = {}
+
+    monitor_phones = load_monitor_phones()
+
+    # Get messages since last watermark (never misses, even after downtime)
+    messages, new_watermarks = get_user_messages_since(monitor_phones, state["watermarks"])
+    state["watermarks"] = new_watermarks
+
+    # ── SAFETY NET 1: Reply Scanner ──────────────────────────────────────
+    any_pending = any(has_pending_deliveries(p) for p in monitor_phones)
+    processed_count = 0
+
+    if any_pending and messages:
+        for msg in messages:
+            ts_key = str(int(msg["timestamp"]))
+
+            if ts_key in state["processed"]:
+                continue
+
+            phone = msg["phone"]
+            text = msg["text"]
+
+            if not has_pending_deliveries(phone):
+                state["processed"][ts_key] = True
+                continue
+
+            # Skip long messages (unlikely to be delivery replies)
+            if len(text) > 200:
+                state["processed"][ts_key] = True
+                continue
+
+            result = call_check_reply(phone, text)
+
+            if result.get("handled"):
+                response = result.get("response")
+                if response:
+                    send_whatsapp(phone, response)
+                    log(f"CONFIRMED from {phone}: '{text[:50]}' -> sent response")
+
+                notify = result.get("notify_sender")
+                if notify and notify.get("phone") and notify.get("message"):
+                    send_whatsapp(notify["phone"], notify["message"])
+                    log(f"NOTIFIED sender {notify['phone']}: {notify['message'][:80]}")
+
+                processed_count += 1
+
+            state["processed"][ts_key] = True
+
+    # ── SAFETY NET 2: Intent Watchdog ────────────────────────────────────
+    intent_alerts = 0
+
+    for msg in messages:
+        ts_key = f"intent_{int(msg['timestamp'])}"
+
+        if ts_key in state["intents"]:
+            continue
+
+        text = msg["text"]
+        phone = msg["phone"]
+        name = monitor_phones.get(phone, "unknown")
+
+        if not has_delivery_intent(text):
+            continue
+
+        msg_age_seconds = (time.time() * 1000 - msg["timestamp"]) / 1000
+
+        # Wait for grace period before checking — give LLM time to process
+        if msg_age_seconds < INTENT_GRACE_PERIOD_SECONDS:
+            continue
+
+        # Check if alma-deliver create was called after this message
+        if was_create_called_after(msg["session_file"], msg["timestamp"]):
+            state["intents"][ts_key] = "handled"
+            continue
+
+        # LLM missed the intent — alert the sender
+        send_whatsapp(
+            phone,
+            "Detecte que pediste una entrega pero no se proceso. "
+            "Puedes repetirlo? Di algo como: \"Dile a [nombre] que [mensaje]\""
+        )
+        log(f"INTENT MISSED from {name}: '{text[:80]}' -- alerted sender")
+        state["intents"][ts_key] = "alerted"
+        intent_alerts += 1
+
+    save_state(state)
+
+    # ── Heartbeat (always write so health monitor sees activity) ─────────
+    msg_count = len(messages)
+    log(f"Scan complete: {msg_count} msgs, {processed_count} replies, {intent_alerts} missed intents")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Alma health monitor — alerts if critical processes are stale.
+
+Checks:
+1. Scheduler log: last line timestamp within 5 min?
+2. Scanner log: last line timestamp within 5 min?
+3. DB file exists and is writable?
+4. Pending deliveries stuck in 'delivering' > 10 min?
+
+Runs every 15 min via cron. Sends WhatsApp alert on failure.
+"""
+
+import os
+import sqlite3
+import subprocess
+import sys
+import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+DB_PATH = os.path.expanduser("~/.openclaw/workspace/alma/deliveries.db")
+SCHEDULER_LOG = os.path.expanduser("~/.openclaw/workspace/alma/scheduler.log")
+SCANNER_LOG = os.path.expanduser("~/.openclaw/logs/cron/alma-scanner.log")
+SEND_SCRIPT = os.path.expanduser("~/.openclaw/scripts/send-whatsapp.sh")
+STATE_FILE = os.path.expanduser("~/.openclaw/workspace/alma/health-state.json")
+ROBERT_PHONE = "+593999481169"
+ECT = ZoneInfo("America/Guayaquil")
+
+MAX_STALE_SECONDS = 300  # 5 min
+MAX_DELIVERING_MINUTES = 10
+ALERT_COOLDOWN_SECONDS = 3600  # Don't re-alert for same issue within 1 hour
+
+
+def log(msg):
+    ts = datetime.now(ECT).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] HEALTH: {msg}", file=sys.stderr)
+
+
+def send_alert(message):
+    """Send WhatsApp alert to Robert."""
+    try:
+        subprocess.run(
+            [SEND_SCRIPT, ROBERT_PHONE, f"⚠️ Alma Health Alert: {message}"],
+            capture_output=True, timeout=45
+        )
+        log(f"ALERT SENT: {message}")
+    except Exception as e:
+        log(f"Failed to send alert: {e}")
+
+
+def load_state():
+    import json
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+
+def save_state(state):
+    import json
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def should_alert(issue_key, state):
+    """Check if we should alert for this issue (respects cooldown)."""
+    last_alert = state.get(issue_key, 0)
+    return (time.time() - last_alert) > ALERT_COOLDOWN_SECONDS
+
+
+def check_log_freshness(log_path, name):
+    """Check if a log file has been written to recently."""
+    if not os.path.exists(log_path):
+        return f"{name} log missing"
+    mtime = os.path.getmtime(log_path)
+    age = time.time() - mtime
+    if age > MAX_STALE_SECONDS:
+        return f"{name} stale ({int(age)}s since last write)"
+    return None
+
+
+def check_db():
+    """Check DB exists and is accessible."""
+    if not os.path.exists(DB_PATH):
+        return "deliveries.db missing"
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.execute("SELECT COUNT(*) FROM deliveries")
+        db.close()
+        return None
+    except Exception as e:
+        return f"DB error: {e}"
+
+
+def check_stuck_deliveries():
+    """Check for deliveries stuck in 'delivering' state."""
+    try:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            """SELECT id, message FROM deliveries
+               WHERE status='delivering'
+               AND updated_at < datetime('now', ?)""",
+            (f"-{MAX_DELIVERING_MINUTES} minutes",)
+        ).fetchall()
+        db.close()
+        if rows:
+            ids = ", ".join(r["id"][:8] for r in rows)
+            return f"{len(rows)} deliveries stuck in 'delivering': {ids}"
+        return None
+    except Exception:
+        return None
+
+
+def main():
+    state = load_state()
+    issues = []
+
+    # Only check log freshness if there are pending/scheduled deliveries
+    # (no deliveries = no log activity expected)
+    has_active = False
+    try:
+        db = sqlite3.connect(DB_PATH)
+        row = db.execute(
+            "SELECT COUNT(*) as c FROM deliveries WHERE status IN ('scheduled', 'delivered', 'delivering')"
+        ).fetchone()
+        has_active = row[0] > 0
+        db.close()
+    except Exception:
+        pass
+
+    if has_active:
+        # Scanner should be active whenever there are delivered (awaiting reply) entries
+        scanner_issue = check_log_freshness(SCANNER_LOG, "Scanner")
+        if scanner_issue:
+            issues.append(scanner_issue)
+
+    # Scheduler only needs to be fresh when there are scheduled/delivering entries
+    has_scheduled = False
+    try:
+        db = sqlite3.connect(DB_PATH)
+        row = db.execute(
+            "SELECT COUNT(*) as c FROM deliveries WHERE status IN ('scheduled', 'delivering')"
+        ).fetchone()
+        has_scheduled = row[0] > 0
+        db.close()
+    except Exception:
+        pass
+
+    if has_scheduled:
+        sched_issue = check_log_freshness(SCHEDULER_LOG, "Scheduler")
+        if sched_issue:
+            issues.append(sched_issue)
+
+    # Always check DB and stuck deliveries
+    db_issue = check_db()
+    if db_issue:
+        issues.append(db_issue)
+
+    stuck_issue = check_stuck_deliveries()
+    if stuck_issue:
+        issues.append(stuck_issue)
+
+    # Send alerts for new issues (respecting cooldown)
+    for issue in issues:
+        key = issue.split("(")[0].strip()  # Normalize key
+        if should_alert(key, state):
+            send_alert(issue)
+            state[key] = time.time()
+
+    save_state(state)
+
+    if issues:
+        log(f"Issues found: {'; '.join(issues)}")
+    else:
+        log("All healthy")
+
+
+if __name__ == "__main__":
+    main()
