@@ -13,7 +13,7 @@ import type { LLMService, LLMMessage } from "../llm/index.js";
 import type { UserService, User } from "../users/index.js";
 import type { MessageProvider } from "../whatsapp/provider.js";
 import { log } from "../../utils/logger.js";
-import { parseLLMJson, validateDeliveryIntent, validateReplyClassification, validateDeliveryMessage } from "../../utils/llm-parse.js";
+import { parseLLMJson, validateDeliveryIntent, validateReplyClassification } from "../../utils/llm-parse.js";
 import { extractPhone, isValidE164 } from "../../utils/phone.js";
 import { withRetry, isHttpRetryable, PermanentError } from "../../utils/retry.js";
 
@@ -146,7 +146,7 @@ export class DeliveryService {
     ];
 
     try {
-      const response = await this.llm.generate(messages, { temperature: 0.2, maxTokens: 150 });
+      const response = await this.llm.generate(messages, { temperature: 0.2, maxTokens: 150, disableThinking: true });
       const parsed = parseLLMJson(
         response.text,
         validateDeliveryIntent,
@@ -792,40 +792,10 @@ export class DeliveryService {
       return `${intro}\n\n${body}`;
     }
 
-    // Compose naturally via LLM
-    try {
-      const messages: LLMMessage[] = [
-        {
-          role: "system",
-          content: [
-            `You are Alma, delivering a message from ${senderName} to ${recipientName}.`,
-            `Language: ${language}`,
-            "Be warm, natural, brief (2-3 sentences). Include the action clearly.",
-            'End with "Avísame cuando lo hagas" or similar in the correct language.',
-            "Do NOT say 'tu mamá dice que...' — phrase it as Alma delivering a request.",
-            'Output ONLY JSON: {"message":"your composed message"}',
-          ].join("\n"),
-        },
-        { role: "user", content: `Message to deliver: ${messageBody}` },
-      ];
-
-      const response = await this.llm.generate(messages, { temperature: 0.7, maxTokens: 200 });
-      const parsed = parseLLMJson(
-        response.text,
-        validateDeliveryMessage,
-        null,
-        MOD,
-      );
-
-      if (parsed?.message) return parsed.message;
-    } catch (error) {
-      log.warn(MOD, "LLM message composition failed, using template", { error: String(error) });
-    }
-
-    // Fallback template in correct language
+    // Template-based composition (no LLM needed — saves ~$0.002/delivery)
     return language === "es"
-      ? `Hola ${recipientName}! ${senderName} me pidió que te avise: ${messageBody}. Avísame cuando lo hagas.`
-      : `Hi ${recipientName}! ${senderName} asked me to let you know: ${messageBody}. Let me know when it's done.`;
+      ? `Hola ${recipientName}! ${senderName} me pidió que te avise: ${messageBody}.\n\nAvísame cuando lo hagas.`
+      : `Hi ${recipientName}! ${senderName} asked me to let you know: ${messageBody}.\n\nLet me know when it's done.`;
   }
 
   private async classifyReply(text: string): Promise<"confirmation" | "pushback" | "unrelated"> {
@@ -864,7 +834,7 @@ export class DeliveryService {
         { role: "user", content: text },
       ];
 
-      const response = await this.llm.generate(messages, { temperature: 0, maxTokens: 30 });
+      const response = await this.llm.generate(messages, { temperature: 0, maxTokens: 30, disableThinking: true });
       const parsed = parseLLMJson(
         response.text,
         validateReplyClassification,
@@ -900,7 +870,7 @@ export class DeliveryService {
         { role: "user", content: text },
       ];
 
-      const response = await this.llm.generate(messages, { temperature: 0, maxTokens: 10 });
+      const response = await this.llm.generate(messages, { temperature: 0, maxTokens: 10, disableThinking: true });
       const idx = parseInt(response.text.trim(), 10);
       if (idx >= 0 && idx < deliveries.length) return deliveries[idx];
     } catch (error) {

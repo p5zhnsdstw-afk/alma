@@ -115,7 +115,7 @@ export class CaptureService {
           },
           { role: "user", content: text },
         ],
-        { temperature: 0.2, maxTokens: 100 },
+        { temperature: 0.2, maxTokens: 100, disableThinking: true },
       );
 
       const parsed = parseLLMJson(

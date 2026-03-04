@@ -47,7 +47,10 @@ export class LLMService {
       content: ctx.message.text ?? "[audio/media message]",
     });
 
-    const response = await this.provider.generate(messages);
+    const response = await this.provider.generate(messages, {
+      maxTokens: 300,
+      disableThinking: true,
+    });
     return response.text;
   }
 

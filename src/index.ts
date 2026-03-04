@@ -56,7 +56,7 @@ async function main() {
   const delivery = new DeliveryService(llm, users);
   const capture = new CaptureService(llm, tasks, calendar);
   capture.setDeliveryService(delivery);
-  const briefing = new BriefingService(llm, calendar, tasks, users, maintenance, delivery);
+  const briefing = new BriefingService(calendar, tasks, users, maintenance, delivery);
   const nudge = new NudgeService(llm, users, tasks);
 
   log.info("main", "All services initialized");

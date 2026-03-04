@@ -4,12 +4,12 @@
  *
  * NC-1: Users receive tangible value within 24 hours (first morning briefing).
  *
+ * COST OPTIMIZATION: Template-based (no LLM calls).
  * The briefing reads from internal calendar regardless of sync status.
  * WhatsApp-only users see events they told Alma about.
  * Synced users see everything from their Google/Apple calendar.
  */
 
-import type { LLMService, LLMMessage } from "../llm/index.js";
 import type { CalendarService, CalendarEvent } from "../calendar/index.js";
 import type { TaskService, Task } from "../tasks/index.js";
 import type { UserService, User } from "../users/index.js";
@@ -30,7 +30,6 @@ interface BriefingData {
 
 export class BriefingService {
   constructor(
-    private llm: LLMService,
     private calendar: CalendarService,
     private tasks: TaskService,
     private users: UserService,
@@ -38,14 +37,13 @@ export class BriefingService {
     private delivery?: DeliveryService,
   ) {}
 
-  /** Generate morning briefing for a user */
+  /** Generate morning briefing for a user (template-based, no LLM) */
   async generateMorningBriefing(userId: string): Promise<string> {
     const user = await this.users.getUser(userId);
     if (!user) return "";
 
     const familyDb = this.users.getFamilyDb(user.familyId);
 
-    // Gather all data sources
     const data: BriefingData = {
       user,
       events: this.calendar.getTodayEvents(familyDb, user.id),
@@ -58,44 +56,48 @@ export class BriefingService {
       pendingDeliveries: this.delivery?.getPendingDeliveryDetails(familyDb, user.id) ?? [],
     };
 
-    // If user has NOTHING — still deliver value
-    if (this.isEmpty(data)) {
-      return this.buildEmptyBriefing(data);
-    }
-
-    return this.buildBriefingWithLLM(data);
+    return this.buildBriefing(data);
   }
 
-  /** Generate evening summary */
+  /** Generate evening summary (template-based, no LLM) */
   async generateEveningSummary(userId: string): Promise<string> {
     const user = await this.users.getUser(userId);
     if (!user) return "";
 
     const familyDb = this.users.getFamilyDb(user.familyId);
-
     const tomorrowEvents = this.calendar.getUpcoming(familyDb, user.id, 1);
     const pendingTasks = await this.tasks.getPending(user.familyId, user.id);
+    const name = user.name.split(" ")[0];
+    const es = user.language === "es";
 
-    const messages: LLMMessage[] = [
-      {
-        role: "system",
-        content: [
-          "You are Alma. Generate a brief evening summary in the user's language.",
-          "Max 3-4 sentences. Warm tone. End with something encouraging.",
-          `User: ${user.name}, language: ${user.language}`,
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          tomorrowEvents: tomorrowEvents.map(formatEvent),
-          pendingTasks: pendingTasks.map((t) => t.title),
-        }),
-      },
-    ];
+    const lines: string[] = [];
+    lines.push(es ? `Buenas noches, ${name}.` : `Good evening, ${name}.`);
 
-    const response = await this.llm.generate(messages);
-    return response.text;
+    if (tomorrowEvents.length > 0) {
+      lines.push("");
+      lines.push(es ? "Mañana:" : "Tomorrow:");
+      for (const e of tomorrowEvents) {
+        const time = e.allDay ? (es ? "todo el día" : "all day") : formatTime(e.startAt);
+        lines.push(`• ${time} — ${e.title}`);
+      }
+    }
+
+    if (pendingTasks.length > 0) {
+      lines.push("");
+      lines.push(es ? "Pendientes:" : "Pending:");
+      for (const t of pendingTasks.slice(0, 3)) {
+        lines.push(`• ${t.title}`);
+      }
+    }
+
+    if (tomorrowEvents.length === 0 && pendingTasks.length === 0) {
+      lines.push(es ? "Mañana se ve tranquilo. Descansa bien." : "Tomorrow looks clear. Rest well.");
+    } else {
+      lines.push("");
+      lines.push(es ? "Descansa bien." : "Rest well.");
+    }
+
+    return lines.join("\n");
   }
 
   private getFamilyMemberEvents(
@@ -106,130 +108,102 @@ export class BriefingService {
     return allToday.filter((e) => e.userId !== currentUser.id);
   }
 
-  private isEmpty(data: BriefingData): boolean {
-    return (
-      data.events.length === 0 &&
-      data.familyEvents.length === 0 &&
-      data.pendingTasks.length === 0 &&
-      data.overdueTasks.length === 0 &&
-      data.maintenanceDue.length === 0 &&
-      data.deliveryStats.sentYesterday === 0 &&
-      data.deliveryStats.pendingNow === 0
-    );
-  }
-
-  private buildEmptyBriefing(data: BriefingData): string {
+  private buildBriefing(data: BriefingData): string {
     const name = data.user.name.split(" ")[0];
-    const lang = data.user.language;
+    const es = data.user.language === "es";
+    const lines: string[] = [];
 
-    if (lang === "es") {
-      const lines = [`Buenos días, ${name}. Hoy tienes el día libre de compromisos.`];
+    // Greeting
+    lines.push(es ? `Buenos días, ${name}.` : `Good morning, ${name}.`);
 
-      if (!data.calendarConnected) {
-        lines.push(
-          "",
-          "Tip: si conectas tu calendario puedo mostrarte tus eventos automáticamente. Dime \"conectar calendario\" cuando quieras.",
-        );
+    // Events
+    if (data.events.length > 0) {
+      lines.push("");
+      lines.push(es ? "Tu día:" : "Your day:");
+      for (const e of data.events) {
+        const time = e.allDay ? (es ? "todo el día" : "all day") : formatTime(e.startAt);
+        const loc = e.location ? ` (${e.location})` : "";
+        lines.push(`• ${time} — ${e.title}${loc}`);
       }
-
-      return lines.join("\n");
     }
 
-    const lines = [`Good morning, ${name}. Your day is clear — no commitments.`];
+    // Family events
+    if (data.familyEvents.length > 0) {
+      lines.push("");
+      lines.push(es ? "Familia:" : "Family:");
+      for (const e of data.familyEvents.slice(0, 3)) {
+        const time = e.allDay ? (es ? "todo el día" : "all day") : formatTime(e.startAt);
+        lines.push(`• ${time} — ${e.title}`);
+      }
+    }
 
-    if (!data.calendarConnected) {
-      lines.push(
-        "",
-        'Tip: connect your calendar and I\'ll sync your events automatically. Just say "connect calendar" anytime.',
-      );
+    // Delivery stats (MVP C core value)
+    const stats = data.deliveryStats;
+    if (stats.sentYesterday > 0 || stats.pendingNow > 0) {
+      lines.push("");
+      lines.push(es ? "Mensajes:" : "Messages:");
+
+      if (stats.sentYesterday > 0) {
+        const confirmed = stats.confirmedYesterday;
+        lines.push(es
+          ? `• Ayer enviaste ${stats.sentYesterday}: ${confirmed} confirmados`
+          : `• Yesterday you sent ${stats.sentYesterday}: ${confirmed} confirmed`);
+      }
+
+      if (stats.pendingNow > 0) {
+        lines.push(es
+          ? `• ${stats.pendingNow} sin respuesta:`
+          : `• ${stats.pendingNow} awaiting reply:`);
+        for (const d of data.pendingDeliveries.slice(0, 3)) {
+          lines.push(`  → ${d.recipientName}: ${d.messageBody.slice(0, 50)}`);
+        }
+      }
+    }
+
+    // Overdue tasks
+    if (data.overdueTasks.length > 0) {
+      lines.push("");
+      lines.push(es ? "Atrasados:" : "Overdue:");
+      for (const t of data.overdueTasks.slice(0, 3)) {
+        lines.push(`• ${t.title}`);
+      }
+    }
+
+    // Pending tasks
+    if (data.pendingTasks.length > 0) {
+      lines.push("");
+      lines.push(es ? "Pendientes:" : "To do:");
+      for (const t of data.pendingTasks.slice(0, 3)) {
+        lines.push(`• ${t.title}`);
+      }
+    }
+
+    // Maintenance
+    if (data.maintenanceDue.length > 0) {
+      lines.push("");
+      lines.push(es ? "Mantenimiento:" : "Maintenance:");
+      for (const m of data.maintenanceDue.slice(0, 2)) {
+        lines.push(`• ${m.item_name}: ${m.task}`);
+      }
+    }
+
+    // Empty day
+    if (data.events.length === 0 && data.pendingTasks.length === 0 && stats.pendingNow === 0) {
+      lines.push(es ? "Hoy tienes el día libre." : "Your day is clear.");
+    }
+
+    // Calendar tip (only if nothing synced and few events)
+    if (!data.calendarConnected && data.events.length < 2) {
+      lines.push("");
+      lines.push(es
+        ? 'Tip: conecta tu calendario para ver tus eventos. Di "conectar calendario".'
+        : 'Tip: connect your calendar to see your events. Say "connect calendar".');
     }
 
     return lines.join("\n");
   }
-
-  private async buildBriefingWithLLM(data: BriefingData): Promise<string> {
-    const context: Record<string, unknown> = {
-      todayEvents: data.events.map(formatEvent),
-      pendingTasks: data.pendingTasks.map((t) => ({
-        title: t.title,
-        due: t.dueAt?.toISOString(),
-        assigned: t.assignedTo,
-      })),
-    };
-
-    if (data.familyEvents.length > 0) {
-      context.familyMemberEvents = data.familyEvents.map(formatEvent);
-    }
-    if (data.overdueTasks.length > 0) {
-      context.overdueTasks = data.overdueTasks.map((t) => t.title);
-    }
-    if (data.maintenanceDue.length > 0) {
-      context.maintenanceDue = data.maintenanceDue.map((m) => ({
-        item: m.item_name,
-        task: m.task,
-        due: m.next_due,
-        priority: m.priority,
-      }));
-    }
-
-    // MVP C: delivery stats
-    if (data.deliveryStats.sentYesterday > 0 || data.deliveryStats.pendingNow > 0) {
-      context.deliveryStats = {
-        sentYesterday: data.deliveryStats.sentYesterday,
-        confirmedYesterday: data.deliveryStats.confirmedYesterday,
-        pendingNow: data.deliveryStats.pendingNow,
-      };
-      if (data.pendingDeliveries.length > 0) {
-        context.pendingDeliveryDetails = data.pendingDeliveries.map((d) => ({
-          to: d.recipientName,
-          about: d.messageBody,
-        }));
-      }
-    }
-
-    const calendarNote = data.calendarConnected
-      ? ""
-      : "\nNote: this user has NO calendar sync. Gently suggest connecting once (not every briefing — only if <3 events total).";
-
-    const messages: LLMMessage[] = [
-      {
-        role: "system",
-        content: [
-          "You are Alma, an AI Home & Life Manager. Generate a morning briefing.",
-          `User: ${data.user.name}, language: ${data.user.language}`,
-          "",
-          "Rules:",
-          "- Start with 'Buenos días, [name]' or 'Good morning, [name]'",
-          "- List events chronologically with times",
-          "- Mention overdue tasks with gentle urgency",
-          "- Mention maintenance items if any (be specific: what, why, what to do)",
-          "- If family members have events, include relevant ones (pickups, shared commitments)",
-          "- If there are delivery stats, add a 'Mensajes' section:",
-          "  Show counts and details ONLY for pending deliveries (confirmed ones just tallied)",
-          '  Example: "Ayer enviaste 3 mensajes: 2 confirmados. Pendiente: Pedro (sacar la basura)"',
-          "  Max 2-3 lines for this section",
-          "- End with one clear action or encouragement",
-          "- MAX 8-10 lines. Brief. Scannable. No walls of text.",
-          "- Use bullet points or line breaks, not paragraphs",
-          calendarNote,
-        ].join("\n"),
-      },
-      {
-        role: "user",
-        content: JSON.stringify(context),
-      },
-    ];
-
-    const response = await this.llm.generate(messages);
-    return response.text;
-  }
 }
 
-function formatEvent(e: CalendarEvent): Record<string, unknown> {
-  return {
-    title: e.title,
-    time: e.allDay ? "all day" : e.startAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    location: e.location,
-    end: e.endAt?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  };
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

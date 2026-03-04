@@ -31,4 +31,6 @@ export interface GenerateOptions {
   maxTokens?: number;
   /** Force a specific model tier */
   tier?: "fast" | "smart";
+  /** Disable thinking/reasoning tokens (saves 6x on output cost) */
+  disableThinking?: boolean;
 }

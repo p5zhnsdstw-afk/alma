@@ -106,8 +106,9 @@ export class BillingService {
       }
 
       const res = await this.paddleRequest("POST", "/transactions", body);
-      const checkoutUrl = res?.data?.checkout?.url as string | undefined;
-      return checkoutUrl ?? null;
+      const data = res.data as Record<string, unknown>;
+      const checkout = data?.checkout as Record<string, unknown> | undefined;
+      return (checkout?.url as string) ?? null;
     } catch (error) {
       log.error(MOD, "failed to create checkout", error);
       return null;

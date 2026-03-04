@@ -180,7 +180,7 @@ export class WhatsAppRouter {
       }
 
       // Normal LLM response (with conversation context)
-      const recentEpisodes = this.getRecentEpisodes(familyDb, user.id, 5);
+      const recentEpisodes = this.getRecentEpisodes(familyDb, user.id, 3);
       const response = await this.services.llm.respond({
         message: msg,
         user,
