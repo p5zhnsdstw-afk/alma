@@ -27,6 +27,9 @@ export interface MessageProvider {
   /** Mark message as read */
   markRead(messageId: string): Promise<void>;
 
+  /** Download media by Meta media ID. Returns raw buffer. */
+  downloadMedia(mediaId: string): Promise<Buffer>;
+
   /** Register webhook handler for incoming messages */
   onMessage(handler: (msg: IncomingMessage) => Promise<void>): void;
 

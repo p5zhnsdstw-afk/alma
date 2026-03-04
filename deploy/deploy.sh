@@ -5,8 +5,9 @@
 set -euo pipefail
 
 REMOTE="macvieja"
-REMOTE_DIR="~/.alma"
+REMOTE_DIR="/home/colo/.alma"
 LOCAL_DIR="$(dirname "$0")/.."
+SERVICE_NAME="alma"
 
 echo "Building..."
 cd "$LOCAL_DIR"
@@ -39,7 +40,22 @@ ssh "$REMOTE" "cd $REMOTE_DIR && npm install --production"
 # Make scripts executable
 ssh "$REMOTE" "chmod +x $REMOTE_DIR/scripts/*.sh"
 
-# Restart
-ssh "$REMOTE" "pkill -f 'node.*alma' 2>/dev/null; cd $REMOTE_DIR && nohup node dist/index.js > logs/alma.log 2>&1 &"
+# Ensure logs directory exists
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/logs"
 
-echo "Deployed. Alma running on $REMOTE."
+# Install systemd service if not present (or update it)
+rsync -avz deploy/alma.service "$REMOTE:/tmp/alma.service"
+ssh "$REMOTE" "sudo cp /tmp/alma.service /etc/systemd/system/$SERVICE_NAME.service && sudo systemctl daemon-reload && sudo systemctl enable $SERVICE_NAME"
+
+# Restart via systemd (graceful: SIGTERM → drain → stop)
+ssh "$REMOTE" "sudo systemctl restart $SERVICE_NAME"
+
+# Wait and verify health
+sleep 3
+HEALTH=$(ssh "$REMOTE" "curl -s http://localhost:18790/health 2>/dev/null || echo '{\"ok\":false}'")
+echo "Health check: $HEALTH"
+
+echo "Deployed. Alma running on $REMOTE via systemd."
+echo "  Logs:    ssh $REMOTE journalctl -u $SERVICE_NAME -f"
+echo "  Status:  ssh $REMOTE sudo systemctl status $SERVICE_NAME"
+echo "  Restart: ssh $REMOTE sudo systemctl restart $SERVICE_NAME"

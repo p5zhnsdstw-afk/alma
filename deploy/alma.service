@@ -1,0 +1,27 @@
+[Unit]
+Description=Alma — AI Home & Life Manager
+After=network.target
+
+[Service]
+Type=simple
+User=colo
+WorkingDirectory=/home/colo/.alma
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alma
+Environment=NODE_ENV=production
+EnvironmentFile=/home/colo/.alma/.env
+
+# Graceful shutdown: send SIGTERM, wait 30s, then SIGKILL
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Auto-restart limits: max 5 restarts in 60s, then stop
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

@@ -3,16 +3,16 @@
 import { useTranslations } from "next-intl";
 import { motion } from "framer-motion";
 import {
-  Mic,
+  Clock,
   Send,
-  Sun,
+  RefreshCw,
 } from "lucide-react";
 import { FeatureCard } from "@/components/feature-card";
 
 const FEATURES = [
-  { key: "capture", icon: Mic },
   { key: "delayedNudge", icon: Send },
-  { key: "briefing", icon: Sun },
+  { key: "capture", icon: RefreshCw },
+  { key: "briefing", icon: Clock },
 ] as const;
 
 const CONTAINER_VARIANTS = {

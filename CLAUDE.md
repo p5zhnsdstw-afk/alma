@@ -4,19 +4,26 @@
 WhatsApp-native AI Home & Life Manager for dual-income homeowner families.
 Built on OpenClaw framework, deployed as separate instance on macvieja.
 
+## MVP C "La Que Manda" — The Family Nag Eliminator
+**Core loop:** Mom tells Alma → Alma delivers to family at right time → follows up → confirms back → morning briefing shows status.
+**Features:** Smart capture (WHO+WHAT+WHEN), delayed delivery, follow-up/re-nudge, confirmation, morning briefing with status, bidirectional replies.
+**Uncommon Service (Frei):** Excel at multi-person delivery (10/10), follow-up (9/10), briefing with status (8/10). Deliberately BAD at: UI, integrations, home maintenance, config, speed, personalization.
+**Score:** 8.6/10 (Vikings Tier 3, Hormozi Value Equation + Uncommon Service)
+
 ## Architecture (ADR-001: Modular Monolith)
 ```
 src/modules/
   whatsapp/      # Message handling, webhook (ADR-003: provider abstraction)
   llm/           # LLM provider abstraction (ADR-004: Gemini Flash primary)
+  delivery/      # MVP C core: delayed delivery, follow-up, confirmation, bidirectional
   calendar/      # Internal calendar + sync adapters (D-14/D-19/D-20)
     adapters/    # Google (MVP), Apple (post-MVP), ICS (later)
   tasks/         # Task tracking, reminders
   maintenance/   # Home maintenance KB (ADR-005: pgvector for shared KB)
   billing/       # Stripe payments
-  users/         # Multi-tenant, family groups
-  briefing/      # Morning/evening briefings
-  capture/       # Voice/text capture pipeline
+  users/         # Multi-tenant, family groups + family_contacts
+  briefing/      # Morning/evening briefings + delivery stats
+  capture/       # Voice/text capture → delivery intent detection first
   nudge/         # Partner/family nudges
 ```
 
@@ -30,6 +37,9 @@ src/modules/
 - ADR-003: WhatsApp API abstraction (CloudAPIProvider + BaileysDevProvider)
 - ADR-004: LLM provider abstraction (Gemini Flash default)
 - ADR-005: Shared home maintenance KB in Postgres + pgvector
+- D-21: MVP C "La Que Manda" — delivery-first capture pipeline, family_contacts for lazy phone resolution
+- D-22: Delivery scheduler runs every 60s in-process (not cron) for precise timing
+- D-23: Unregistered family members can receive + reply without onboarding (delivery_phones reverse lookup)
 
 ## Calendar Architecture
 ```
@@ -52,10 +62,13 @@ Apple CalDAV notes:
 - **Per-family:** SQLite file per family in `data/families/{family_id}.db`
   - `calendar_events` — internal calendar (source of truth, synced from external)
   - `items` — captured tasks, reminders, notes
+  - `deliveries` — MVP C: sender→recipient message lifecycle (pending/scheduled/delivered/confirmed/expired)
+  - `family_contacts` — name-to-phone mapping for delivery recipients (lazy collection)
   - `home_profile` + `maintenance_schedule` + `maintenance_log`
   - `preferences` + `episodes`
 - **Shared:** Master DB (users, billing, referrals) in `data/alma-master.db`
   - Per-user calendar sync config (provider, token, external ID)
+  - `delivery_phones` — reverse lookup: unregistered phone → family_id
 - **Home maintenance KB:** Postgres + pgvector (shared knowledge, not per-family)
 
 ## Tech Stack

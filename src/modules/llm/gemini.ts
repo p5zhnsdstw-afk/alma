@@ -46,6 +46,13 @@ export class GeminiProvider implements LLMProvider {
       }),
     });
 
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "unknown");
+      const error = new Error(`Gemini API ${res.status}: ${errorText.slice(0, 200)}`);
+      (error as any).status = res.status;
+      throw error;
+    }
+
     const data = (await res.json()) as {
       candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
       usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number };
@@ -86,6 +93,11 @@ export class GeminiProvider implements LLMProvider {
         ],
       }),
     });
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "unknown");
+      throw new Error(`Gemini transcribe ${res.status}: ${errorText.slice(0, 200)}`);
+    }
 
     const data = (await res.json()) as {
       candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;

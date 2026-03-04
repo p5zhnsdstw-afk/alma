@@ -151,6 +151,20 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
     return res.ok;
   }
 
+  /** Generate the OAuth2 authorization URL for user consent */
+  getAuthUrl(redirectUri: string, state: string): string {
+    const params = new URLSearchParams({
+      client_id: this.config.google.clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "https://www.googleapis.com/auth/calendar",
+      access_type: "offline",
+      prompt: "consent",
+      state,
+    });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  }
+
   async exchangeCode(
     code: string,
     redirectUri: string,
@@ -160,17 +174,27 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: this.config.google.serviceAccountKeyPath, // TODO: use OAuth client ID
+        client_id: this.config.google.clientId,
+        client_secret: this.config.google.clientSecret,
         redirect_uri: redirectUri,
         grant_type: "authorization_code",
       }),
     });
 
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "unknown");
+      throw new Error(`Google OAuth token exchange failed: ${res.status} ${errorText.slice(0, 200)}`);
+    }
+
     const data = (await res.json()) as { refresh_token: string };
+
+    if (!data.refresh_token) {
+      throw new Error("Google OAuth did not return a refresh token — user may need to re-authorize");
+    }
 
     return {
       refreshToken: data.refresh_token,
-      calendarId: "primary", // default to user's primary calendar
+      calendarId: "primary",
     };
   }
 
@@ -180,10 +204,16 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         refresh_token: refreshToken,
-        client_id: this.config.google.serviceAccountKeyPath, // TODO: use OAuth client ID
+        client_id: this.config.google.clientId,
+        client_secret: this.config.google.clientSecret,
         grant_type: "refresh_token",
       }),
     });
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "unknown");
+      throw new Error(`Google OAuth token refresh failed: ${res.status} ${errorText.slice(0, 200)}`);
+    }
 
     const data = (await res.json()) as { access_token: string };
     return data.access_token;

@@ -5,7 +5,20 @@
 
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+
+/** All master-scoped migration files, sorted by name */
+function getMasterMigrations(): Array<{ name: string; sql: string }> {
+  const migrationsDir = new URL("./migrations/", import.meta.url);
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.match(/^\d+-master.*\.sql$/))
+    .sort();
+
+  return files.map((name) => ({
+    name,
+    sql: readFileSync(new URL(`./migrations/${name}`, import.meta.url), "utf-8"),
+  }));
+}
 
 export function initMasterDb(dataDir: string): Database.Database {
   const dbPath = resolve(dataDir, "alma-master.db");
@@ -14,12 +27,28 @@ export function initMasterDb(dataDir: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
 
-  // Run migrations
-  const migrationSql = readFileSync(
-    new URL("./migrations/001-master.sql", import.meta.url),
-    "utf-8",
+  // Migration tracking
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS _migrations (
+      name TEXT PRIMARY KEY,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
   );
-  db.exec(migrationSql);
+
+  const applied = new Set(
+    (db.prepare("SELECT name FROM _migrations").all() as Array<{ name: string }>).map(
+      (r) => r.name,
+    ),
+  );
+
+  for (const migration of getMasterMigrations()) {
+    if (applied.has(migration.name)) continue;
+
+    db.transaction(() => {
+      db.exec(migration.sql);
+      db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(migration.name);
+    })();
+  }
 
   return db;
 }

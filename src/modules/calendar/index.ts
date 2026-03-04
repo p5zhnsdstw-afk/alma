@@ -46,6 +46,11 @@ export class CalendarService {
     this.adapters.set("apple", new AppleCalendarAdapter(config));
   }
 
+  /** Get a typed adapter for direct access (OAuth URL generation, etc.) */
+  getGoogleAdapter(): GoogleCalendarAdapter {
+    return this.adapters.get("google") as GoogleCalendarAdapter;
+  }
+
   /** Get today's events for a user from internal calendar */
   getTodayEvents(familyDb: Database.Database, userId: string): CalendarEvent[] {
     const rows = familyDb

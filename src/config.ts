@@ -1,5 +1,13 @@
 import { resolve } from "node:path";
 
+const REQUIRED_ENV_VARS = [
+  "WHATSAPP_PHONE_NUMBER_ID",
+  "WHATSAPP_ACCESS_TOKEN",
+  "WHATSAPP_VERIFY_TOKEN",
+  "WHATSAPP_APP_SECRET",
+  "GEMINI_API_KEY",
+] as const;
+
 export interface AlmaConfig {
   port: number;
   dataDir: string;
@@ -18,8 +26,8 @@ export interface AlmaConfig {
   };
 
   google: {
-    serviceAccountKeyPath: string;
-    calendarId: string;
+    clientId: string;
+    clientSecret: string;
   };
 
   stripe: {
@@ -30,6 +38,14 @@ export interface AlmaConfig {
 
 export function loadConfig(): AlmaConfig {
   const env = (process.env.NODE_ENV ?? "development") as AlmaConfig["env"];
+
+  // Validate required env vars in production
+  if (env === "production") {
+    const missing = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+    if (missing.length > 0) {
+      throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    }
+  }
 
   return {
     port: Number(process.env.ALMA_PORT ?? 18790),
@@ -49,8 +65,8 @@ export function loadConfig(): AlmaConfig {
     },
 
     google: {
-      serviceAccountKeyPath: process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH ?? "",
-      calendarId: process.env.GOOGLE_CALENDAR_ID ?? "",
+      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     },
 
     stripe: {

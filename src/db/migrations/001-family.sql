@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 CREATE TABLE IF NOT EXISTS episodes (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
-  summary TEXT NOT NULL, -- LLM-generated summary of the conversation
-  key_decisions TEXT, -- JSON array of decisions made
+  role TEXT NOT NULL, -- 'user' or 'assistant'
+  content TEXT NOT NULL, -- message content (max 2000 chars)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,7 +1,6 @@
 /**
  * Briefing module — morning/evening briefings.
- * Job Story: "When I wake up on a busy weekday, I want to receive a single
- * complete briefing in WhatsApp, so I can start my day feeling in control."
+ * MVP C: Includes delivery stats (messages sent, confirmed, pending).
  *
  * NC-1: Users receive tangible value within 24 hours (first morning briefing).
  *
@@ -15,15 +14,18 @@ import type { CalendarService, CalendarEvent } from "../calendar/index.js";
 import type { TaskService, Task } from "../tasks/index.js";
 import type { UserService, User } from "../users/index.js";
 import type { MaintenanceService, MaintenanceTask } from "../maintenance/index.js";
+import type { DeliveryService, DeliveryStats } from "../delivery/index.js";
 
 interface BriefingData {
   user: User;
   events: CalendarEvent[];
-  familyEvents: CalendarEvent[]; // other family members' events
+  familyEvents: CalendarEvent[];
   pendingTasks: Task[];
   overdueTasks: Task[];
   maintenanceDue: MaintenanceTask[];
   calendarConnected: boolean;
+  deliveryStats: DeliveryStats;
+  pendingDeliveries: Array<{ recipientName: string; messageBody: string }>;
 }
 
 export class BriefingService {
@@ -33,6 +35,7 @@ export class BriefingService {
     private tasks: TaskService,
     private users: UserService,
     private maintenance?: MaintenanceService,
+    private delivery?: DeliveryService,
   ) {}
 
   /** Generate morning briefing for a user */
@@ -51,9 +54,11 @@ export class BriefingService {
       overdueTasks: await this.tasks.getOverdue(user.familyId),
       maintenanceDue: this.maintenance?.getOverdue(familyDb) ?? [],
       calendarConnected: user.calendarProvider !== null,
+      deliveryStats: this.delivery?.getDeliveryStats(familyDb, user.id) ?? { sentYesterday: 0, confirmedYesterday: 0, pendingNow: 0 },
+      pendingDeliveries: this.delivery?.getPendingDeliveryDetails(familyDb, user.id) ?? [],
     };
 
-    // If user has NOTHING (no events, no tasks, no maintenance) — still deliver value
+    // If user has NOTHING — still deliver value
     if (this.isEmpty(data)) {
       return this.buildEmptyBriefing(data);
     }
@@ -68,7 +73,6 @@ export class BriefingService {
 
     const familyDb = this.users.getFamilyDb(user.familyId);
 
-    // Tomorrow's events for preview
     const tomorrowEvents = this.calendar.getUpcoming(familyDb, user.id, 1);
     const pendingTasks = await this.tasks.getPending(user.familyId, user.id);
 
@@ -98,7 +102,6 @@ export class BriefingService {
     familyDb: ReturnType<UserService["getFamilyDb"]>,
     currentUser: User,
   ): CalendarEvent[] {
-    // Get today's events for ALL family members except current user
     const allToday = this.calendar.getFamilyToday(familyDb);
     return allToday.filter((e) => e.userId !== currentUser.id);
   }
@@ -109,7 +112,9 @@ export class BriefingService {
       data.familyEvents.length === 0 &&
       data.pendingTasks.length === 0 &&
       data.overdueTasks.length === 0 &&
-      data.maintenanceDue.length === 0
+      data.maintenanceDue.length === 0 &&
+      data.deliveryStats.sentYesterday === 0 &&
+      data.deliveryStats.pendingNow === 0
     );
   }
 
@@ -167,6 +172,21 @@ export class BriefingService {
       }));
     }
 
+    // MVP C: delivery stats
+    if (data.deliveryStats.sentYesterday > 0 || data.deliveryStats.pendingNow > 0) {
+      context.deliveryStats = {
+        sentYesterday: data.deliveryStats.sentYesterday,
+        confirmedYesterday: data.deliveryStats.confirmedYesterday,
+        pendingNow: data.deliveryStats.pendingNow,
+      };
+      if (data.pendingDeliveries.length > 0) {
+        context.pendingDeliveryDetails = data.pendingDeliveries.map((d) => ({
+          to: d.recipientName,
+          about: d.messageBody,
+        }));
+      }
+    }
+
     const calendarNote = data.calendarConnected
       ? ""
       : "\nNote: this user has NO calendar sync. Gently suggest connecting once (not every briefing — only if <3 events total).";
@@ -184,6 +204,10 @@ export class BriefingService {
           "- Mention overdue tasks with gentle urgency",
           "- Mention maintenance items if any (be specific: what, why, what to do)",
           "- If family members have events, include relevant ones (pickups, shared commitments)",
+          "- If there are delivery stats, add a 'Mensajes' section:",
+          "  Show counts and details ONLY for pending deliveries (confirmed ones just tallied)",
+          '  Example: "Ayer enviaste 3 mensajes: 2 confirmados. Pendiente: Pedro (sacar la basura)"',
+          "  Max 2-3 lines for this section",
           "- End with one clear action or encouragement",
           "- MAX 8-10 lines. Brief. Scannable. No walls of text.",
           "- Use bullet points or line breaks, not paragraphs",

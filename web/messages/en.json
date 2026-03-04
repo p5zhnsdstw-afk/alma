@@ -6,8 +6,8 @@
     "cta": "Start free"
   },
   "hero": {
-    "headline": "Your home, under control.",
-    "subheadline": "Alma prevents home disasters, eliminates chaos, and distributes the mental load. All from WhatsApp.",
+    "headline": "Stop being the family nag.",
+    "subheadline": "Tell Alma what you need and she delivers it to your family — at the right time, with follow-up. All from WhatsApp.",
     "cta": "Start 7-day free trial",
     "subCta": "No credit card. No app. Just WhatsApp.",
     "fundadoras": "{count} spots left at ${price}/mo for life"
@@ -32,28 +32,28 @@
     "title": "How Alma Works",
     "subtitle": "Three steps. Zero new apps.",
     "step1": {
-      "title": "Talk on WhatsApp",
-      "description": "Tell Alma what you need — by text or voice note. No forms, no apps."
+      "title": "Tell Alma",
+      "description": "\"Tell Pedro to take out the trash at 8pm.\" Text or voice note. 5 seconds."
     },
     "step2": {
-      "title": "Alma organizes everything",
-      "description": "Schedules appointments, creates reminders, plans maintenance, and coordinates with your family."
+      "title": "Alma delivers it",
+      "description": "At the time you chose, Alma sends Pedro the message in a warm tone — not you."
     },
     "step3": {
-      "title": "Your family gets nudges",
-      "description": "Alma sends gentle reminders to your partner and kids. Without you having to be the 'bad guy'."
+      "title": "You get confirmed",
+      "description": "Pedro replies, Alma lets you know. If he doesn't, Alma follows up. Your morning briefing shows status."
     }
   },
   "features": {
     "title": "What Alma Does For You",
-    "subtitle": "Everything you need for a stress-free home",
+    "subtitle": "Stop being your family's messenger",
     "delayedNudge": {
-      "title": "Tell Alma, She Delivers",
-      "description": "Send a message now and Alma delivers it to whoever you want, at the time you choose. You remember it, Alma handles it."
+      "title": "Delivers at the Right Time",
+      "description": "\"Tell Pedro at 8pm to take out the trash.\" Alma holds it and delivers on time. You don't have to remember."
     },
     "briefing": {
-      "title": "Morning Briefing",
-      "description": "Every morning, Alma tells you what's on: appointments, pending tasks, reminders."
+      "title": "Briefing with Status",
+      "description": "Every morning: what was delivered, who confirmed, what's still pending. All in one message."
     },
     "maintenance": {
       "title": "Home Maintenance",
@@ -64,8 +64,8 @@
       "description": "Assign tasks, send reminders to your partner, and auto-track follow-ups."
     },
     "capture": {
-      "title": "5-Second Capture",
-      "description": "Send a voice note or text and Alma turns it into a task, event, or reminder."
+      "title": "Automatic Follow-up",
+      "description": "If they don't respond, Alma follows up for you. When they confirm, you get notified. Zero effort."
     },
     "whatsapp": {
       "title": "Lives on WhatsApp",
@@ -158,8 +158,8 @@
     ]
   },
   "finalCta": {
-    "headline": "Your home deserves to be under control.",
-    "subheadline": "Join the families that stopped improvising.",
+    "headline": "Stop being the one who has to say everything.",
+    "subheadline": "Join the families where Alma handles the messaging.",
     "cta": "Start 7-day free trial"
   },
   "footer": {
