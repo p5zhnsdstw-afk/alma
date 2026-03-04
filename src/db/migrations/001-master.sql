@@ -6,8 +6,8 @@ CREATE TABLE IF NOT EXISTS families (
   name TEXT NOT NULL,
   plan TEXT NOT NULL DEFAULT 'trial', -- trial, alma, familia
   trial_ends_at DATETIME,
-  stripe_customer_id TEXT,
-  stripe_subscription_id TEXT,
+  paddle_customer_id TEXT,
+  paddle_subscription_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS billing_events (
   family_id TEXT NOT NULL REFERENCES families(id),
   event_type TEXT NOT NULL, -- payment, refund, churn, upgrade, downgrade
   amount_cents INTEGER,
-  stripe_event_id TEXT,
+  paddle_event_id TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

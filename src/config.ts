@@ -30,9 +30,14 @@ export interface AlmaConfig {
     clientSecret: string;
   };
 
-  stripe: {
-    secretKey: string;
+  paddle: {
+    apiKey: string;
     webhookSecret: string;
+    environment: "sandbox" | "production";
+    priceIds: {
+      alma: string;
+      familia: string;
+    };
   };
 }
 
@@ -69,9 +74,14 @@ export function loadConfig(): AlmaConfig {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
     },
 
-    stripe: {
-      secretKey: process.env.STRIPE_SECRET_KEY ?? "",
-      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+    paddle: {
+      apiKey: process.env.PADDLE_API_KEY ?? "",
+      webhookSecret: process.env.PADDLE_WEBHOOK_SECRET ?? "",
+      environment: (process.env.PADDLE_ENVIRONMENT ?? "sandbox") as "sandbox" | "production",
+      priceIds: {
+        alma: process.env.PADDLE_PRICE_ID_ALMA ?? "",
+        familia: process.env.PADDLE_PRICE_ID_FAMILIA ?? "",
+      },
     },
   };
 }

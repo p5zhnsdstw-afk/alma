@@ -20,7 +20,7 @@ src/modules/
     adapters/    # Google (MVP), Apple (post-MVP), ICS (later)
   tasks/         # Task tracking, reminders
   maintenance/   # Home maintenance KB (ADR-005: pgvector for shared KB)
-  billing/       # Stripe payments
+  billing/       # Paddle payments (Merchant of Record)
   users/         # Multi-tenant, family groups + family_contacts
   briefing/      # Morning/evening briefings + delivery stats
   capture/       # Voice/text capture → delivery intent detection first
@@ -76,7 +76,7 @@ Apple CalDAV notes:
 - **Framework:** OpenClaw (WhatsApp connectivity, agent orchestration)
 - **LLM:** Gemini 2.5 Flash (via OpenRouter or direct API)
 - **Channel:** WhatsApp Business Cloud API
-- **Payments:** Stripe
+- **Payments:** Paddle (Merchant of Record — handles tax/IVA/compliance)
 - **Deploy target:** macvieja (100.77.224.43) at `~/.alma/`
 
 ## Pricing
