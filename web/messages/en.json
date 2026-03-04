@@ -91,13 +91,10 @@
       "period": "/mo",
       "description": "For the one carrying the load",
       "features": [
-        "Delayed messages to your family",
-        "Morning and evening briefings",
-        "Preventive home maintenance",
         "Voice and text capture",
-        "Partner coordination",
-        "Adaptive memory",
-        "WhatsApp support"
+        "Delayed messages to your family",
+        "Morning briefing",
+        "All on WhatsApp"
       ]
     },
     "familia": {
@@ -107,11 +104,9 @@
       "description": "For the whole family",
       "features": [
         "Everything in Alma, plus:",
-        "Up to 4 members with own briefings",
-        "Shared family calendar",
-        "Task assignment for everyone",
-        "Personalized briefings per member",
-        "Priority support"
+        "Up to 4 members",
+        "Delayed messages to each member",
+        "Personalized briefings per member"
       ],
       "popular": "Most popular"
     },

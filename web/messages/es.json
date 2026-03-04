@@ -91,13 +91,10 @@
       "period": "/mes",
       "description": "Para quien lleva la carga del hogar",
       "features": [
-        "Mensajes diferidos a tu familia",
-        "Briefing matutino y vespertino",
-        "Mantenimiento preventivo del hogar",
         "Captura por voz y texto",
-        "Coordinación con tu pareja",
-        "Memoria adaptativa",
-        "Soporte por WhatsApp"
+        "Mensajes diferidos a tu familia",
+        "Briefing matutino",
+        "Todo por WhatsApp"
       ]
     },
     "familia": {
@@ -107,11 +104,9 @@
       "description": "Para toda la familia",
       "features": [
         "Todo lo de Alma, más:",
-        "Hasta 4 miembros con briefings propios",
-        "Calendario familiar compartido",
-        "Asignación de tareas a todos",
-        "Briefings personalizados por miembro",
-        "Prioridad en soporte"
+        "Hasta 4 miembros",
+        "Mensajes diferidos a cada miembro",
+        "Briefings personalizados por miembro"
       ],
       "popular": "Más popular"
     },
